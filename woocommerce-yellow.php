@@ -165,7 +165,7 @@ function woocommerce_yellow_init()
                         'order'     => $order_number,
                     );
                     $invoice = $yellow->createInvoice( $payload );
-                    $this->log('Invoice created with payload: '.json_encode($payload).', respons: '.json_encode($invoice));
+                    $this->log('Invoice created with payload: '.json_encode($payload).', response: '.json_encode($invoice));
 
                     if (false === isset($invoice) || true === empty($invoice)) {
                         throw new \Exception('The Yellow payment plugin was called to process a payment but could not instantiate an invoice object. Cannot continue!');
