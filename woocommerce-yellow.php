@@ -6,7 +6,7 @@
     Author:      Yellow
     Author URI:  https://yellowpay.co
 
-    Version:           1.0.0
+    Version:           1.0.1
     License:           Copyright 2015 Yellow Inc., MIT License
     GitHub Plugin URI: https://github.com/YellowPay/yellow-wordpress
  */
@@ -53,7 +53,7 @@ function woocommerce_yellow_init()
             $this->backend_title      = 'Bitcoin Payment';
             $this->description        = 'Bitcoin is digital cash. Make online payments even if you don\'t have a credit card!';
             $this->method_title       = 'Yellow';
-            $this->method_description = 'Yellow bitcoin payment';
+            $this->method_description = 'To accept bitcoin payment, register through <a target="_blank" href="http://merchant.yellowpay.co/">Yellow merchants website</a>, then paste your API key and secret below';
 
             // Load the settings.
             $this->init_form_fields();
@@ -69,7 +69,7 @@ function woocommerce_yellow_init()
             add_action('woocommerce_receipt_'.$this->id, array($this, 'order_invoice'));
 
             // Valid for use and IPN Callback
-            if (false === $this->is_valid_for_use() || !get_option('woocommerce_yellow_enabled') ) {
+            if (false === $this->is_valid_for_use() || !$this->get_option('enabled') ) {
                 $this->enabled = 'no';
             } else {
                 $this->enabled = 'yes';
@@ -167,30 +167,30 @@ function woocommerce_yellow_init()
                     $invoice = $yellow->createInvoice( $payload );
                     $this->log('Invoice created with payload: '.json_encode($payload).', response: '.json_encode($invoice));
 
-                    if (false === isset($invoice) || true === empty($invoice)) {
+                    if (false === isset($invoice) || true === empty($invoice) || true === is_object($invoice)) {
                         throw new \Exception('The Yellow payment plugin was called to process a payment but could not instantiate an invoice object. Cannot continue!');
                     }
+                    
+                    if( $order->get_status() != "failed" ){ //new order
+                        $order->add_order_note(__('Order created with Yellow invoice of ID: '.$invoice["id"], 'yellow'));
+                        // Reduce stock levels
+                        $order->reduce_order_stock();
+                        // Remove cart
+                        WC()->cart->empty_cart();
+                    }else{  //failed order with new invoice
+                        $order->add_order_note(__('New Yellow invoice created of ID: '.$invoice["id"], 'yellow'));
+                        $order->update_status('pending');
+                    }
+
+                    $_SESSION[$order_invoice_url_variable] = $invoice["url"];
                 } catch (\Exception $e) {
                     error_log($e->getMessage());
 
                     return array(
                         'result'    => 'success',
-                        'messages'  => 'Sorry, but Bitcoin checkout with Yellow does not appear to be working.'
+                        'messages'  => "We're sorry, an error has occurred while completing your request. Please resubmit the shopping cart and try again. If the error persists, please send us an email at <a href='mailto:support@yellowpay.co' target='_blank'>support@yellowpay.co</a>"
                     );
                 }
-
-                if( $order->get_status() != "failed" ){ //new order
-                    $order->add_order_note(__('Order created with Yellow invoice of ID: '.$invoice["id"], 'yellow'));
-                    // Reduce stock levels
-                    $order->reduce_order_stock();
-                    // Remove cart
-                    WC()->cart->empty_cart();
-                }else{  //failed order with new invoice
-                    $order->add_order_note(__('New Yellow invoice created of ID: '.$invoice["id"], 'yellow'));
-                    $order->update_status('pending');
-                }
-
-                $_SESSION[$order_invoice_url_variable] = $invoice["url"];
             }
 
             // Redirect the customer to the Yellow invoice
@@ -359,10 +359,10 @@ function woocommerce_yellow_init()
         }
     }
 
-
     /**
     * Add Yellow Payment Gateway to WooCommerce
     **/
+    add_filter('woocommerce_payment_gateways', 'wc_add_yellow');
     function wc_add_yellow($methods)
     {
         $methods[] = 'WC_Gateway_Yellow';
@@ -370,13 +370,10 @@ function woocommerce_yellow_init()
         return $methods;
     }
 
-    add_filter('woocommerce_payment_gateways', 'wc_add_yellow');
-
     /**
      * Add Settings link to the plugin entry in the plugins menu
      **/
     add_filter('plugin_action_links', 'yellow_plugin_action_links', 10, 2);
-
     function yellow_plugin_action_links($links, $file)
     {
         static $this_plugin;
@@ -394,6 +391,26 @@ function woocommerce_yellow_init()
 
         return $links;
     }
+
+    /**
+     * Add message to apppear instead of the default message after the plugin activation
+     **/
+    add_filter('gettext', 
+        function( $translated_text, $untranslated_text, $domain )
+        {
+            $old = array(
+                "Plugin <strong>activated</strong>.",
+                "Selected plugins <strong>activated</strong>." 
+            );
+
+            $settings_link = '<a href="'.get_bloginfo('wpurl').'/wp-admin/admin.php?page=wc-settings&tab=checkout&section=wc_gateway_yellow">settings page</a>';
+            $new = 'To start accepting Bitcoin payments, visit the '.$settings_link.' to connect your site to your Yellow account';
+            if ( in_array( $untranslated_text, $old, true ) )
+                $translated_text = substr($untranslated_text, 0, -1).', '.$new;
+
+            return $translated_text;
+         }
+    , 99, 3);
 }
 
 function woocommerce_yellow_failed_requirements()
@@ -472,7 +489,6 @@ function woocommerce_yellow_activate()
         }
 
         update_option('woocommerce_Yellow_version', '1.0.0');
-
     } else {
         // Requirements not met, return an error message
         wp_die($failed.'<br><a href="'.$plugins_url.'">Return to plugins screen</a>');
